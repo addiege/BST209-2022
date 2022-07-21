@@ -1,0 +1,588 @@
+---
+title: "BST209 Group Projec Team G"
+author: Skyler Shapiro (original code author), Jennifer Cape, Shernaz Dossabhoy, Addison Gearhart and Po-Chih
+  Kuo
+date: "2022/07/20"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(gargle_verbosity = "info")
+```
+
+## 0. Introduction
+
+This script runs through a simple workflow for training and testing a diabetes mellitus prediction model. Briefly, we will:
+
+1.  Load required packages and gather data
+2.  Split the data into training and testing sets
+3.  Preprocess the data and remove missing values
+4.  Build a random forest classifier using the training set
+5.  Evaluate our model on the test set
+
+You may ask: Why is it important to predict cases of diabetes mellitus in patients?
+
+In the hospital, patient medical records may take days to transfer. Knowledge about chronic conditions like diabetes can inform clinical decisions about patient care and ultimately improve patient outcomes.
+
+Lets begin!
+
+## 1. Getting started
+
+### 1.1 Load required packages
+
+First, let's load the R packages necessary for our project.
+
+```{r, echo = FALSE, include=FALSE}
+# Checking that all required packages are installed
+if(!require("tidyverse")) install.packages("tidyverse")
+if(!require("tableone")) install.packages("tableone")
+if(!require("caret")) install.packages("caret")
+if(!require("dplyr")) install.packages("dplyr")
+if(!require("ROCR")) install.packages("ROCR")
+if(!require("tidyverse")) install.packages("randomForest")
+if(!require("knitr")) install.packages("knitr")
+if(!require("Hmisc")) install.packages("Hmisc")
+
+
+# List of packages to load
+packages <- c("tidyverse", "tableone", "caret", "dplyr", "ROCR",
+              "knitr", "randomForest", "Hmisc")
+
+# Load packages
+lapply(packages, FUN = function(X) {
+    do.call("require", list(X))
+})
+```
+
+### 1.2 Load the dataset
+
+Access the data from PhysioNet from the [WIDS Datathon Project Page](https://physionet.org/content/widsdatathon2020/). Download 'training_v2.csv' from the "Files" section of the project.
+
+Now we can load in our data and start to work with it.
+
+```{r, echo = FALSE, include=FALSE}
+# Read in data (might take a few seconds)
+gossis <- read_csv("~/Downloads/training_v2.csv")
+```
+
+### 1.3 Subset selection
+
+We will include four predictors in our model: `age`, `bmi`, `gender`, and `glucose apache`. Feel free to include more or choose entirely different predictors in your model!
+
+```{r}
+#  Select subset of variables from original data
+reduced_data <- gossis %>% select(bmi,
+                                  age,
+                                  gender,
+                                  glucose_apache,
+                                  diabetes_mellitus, h1_glucose_max, d1_glucose_max,ethnicity,wbc_apache)
+head(reduced_data) %>% kable()
+```
+
+We will also define our outcome variable and drop data with unknown outcomes
+
+```{r set_outcome, echo=TRUE}
+# Set the outcome variable here
+reduced_data$outcome_variable <- as.factor(reduced_data$diabetes_mellitus)
+reduced_data <- subset(reduced_data, select = -c(diabetes_mellitus))
+
+# Check number of rows
+nrow(reduced_data)
+
+# For simplicity, we will drop all rows with missing outcomes
+reduced_data <- drop_na(reduced_data, any_of("outcome_variable"))
+
+# Check number of rows after removing rows with missing outcomes
+nrow(reduced_data)
+```
+
+## 2. Create the training and testing sets
+
+### 2.1 Encoding
+
+We'll encode our categorical variables. Encoding is the process of reshaping and binarizing categorical data to better suit machine learning models.
+
+```{r}
+# Encode gender variable: male = 1, non-male = 0
+reduced_data$gender <- ifelse(reduced_data$gender == "M", 1, 0)
+```
+
+### 2.2 Split the data
+
+Let's create the training and test datasets.
+
+```{r training_test, echo=TRUE}
+# Set the random number seed for reproducibility
+set.seed(1)
+
+# Create data partition using the outcome variable
+train_index <- createDataPartition(reduced_data$outcome_variable,
+                                   times = 1, p = 0.8, list = FALSE)
+
+# Split data into train and test sets, select columns that will be used in model
+train_set <- reduced_data[train_index, ]
+head(train_set)
+test_set <- reduced_data[-train_index, ]
+head(test_set)
+```
+
+## 3. View summary statistics ("Table 1")
+
+-   Most studies include summary statistics as Table 1.
+-   `library(tableone)` makes it easy to create these summary statistics
+-   Developed by Dr Kazuki Yoshida, while a Ph.D. student at Harvard University.
+-   [TableOne documentation](https://cran.r-project.org/web/packages/tableone/tableone.pdf)
+
+```{r}
+allvars <- c("bmi", "age", "gender", "glucose_apache", "h1_glucose_max", "d1_glucose_max","ethnicity", "wbc_apache")
+catvars <- c("gender")
+table_gossis <- CreateTableOne(vars = allvars, data = train_set,
+                factorVars = catvars,
+                strata = "outcome_variable")
+kableone(table_gossis, caption = "Summary statistics of the training set")
+```
+
+## 4. Preprocessing the data
+
+### 4.1 Impute missing values
+
+We have to consider the NA values in our data. For simplicity, we will replace missing values with the median of the train_set.
+
+Note that it is important that we do this *after* splitting into training and test sets. If we imputed values using test data, we would risk leaking information about our test set into our training set ("data leakage").
+
+Feel free to experiment with different imputation techniques!
+
+```{r preprocessing, echo=TRUE}
+
+predictors <- c("age", "bmi", "gender", "glucose_apache", "h1_glucose_max", "d1_glucose_max", "ethnicity", "wbc_apache")
+
+for (col in predictors) {
+    test_set[[col]][is.na(test_set[[col]])] <-
+        median(train_set[[col]], na.rm = TRUE)
+    train_set[[col]][is.na(train_set[[col]])] <-
+        median(train_set[[col]], na.rm = TRUE)
+}
+```
+
+### 4.2 Normalization
+
+For many models it is important to normalize the data. Without normalization, variables with larger magnitudes may have a greater effect on the model.
+
+One common approach for normalization is to divide each variable by its standard deviation and subtract the mean. As before, to avoid data leakage, normalization should be done after splitting into training and test sets.
+
+Our tree model does not require normalization, so we will skip this step.
+
+## 5. Model building
+
+### 5.1 Train a random forest classifier
+
+-   We will use the `randomForest` library to build a random forest model.
+-   See the [randomForest documentation on CRAN](https://cran.r-project.org/web/packages/randomForest/randomForest.pdf).
+
+### see train data distribution 
+```{r}
+hist.data.frame(train_set)
+```
+
+### change model!! http://topepo.github.io/caret/train-models-by-tag.html
+for example: method = "svmPoly", method = "glm"
+
+```{r train_model, echo=TRUE}
+library(rpart)
+library(tree)
+library(rpart.plot)
+
+forest <- rpart(outcome_variable ~ age + bmi + gender + glucose_apache + h1_glucose_max + d1_glucose_max + ethnicity + wbc_apache, data = train_set)
+
+```
+
+### 5.2 View variable importance
+
+
+
+```{r importance, echo=TRUE}
+rpart.plot(forest)
+```
+
+We can see that `glucose_apache` and `bmi` had the most predictive power.
+
+### 5.3 Predict diabetes mellitus in "unseen patients"
+
+#### Select patients from the test set
+
+-   Let's look some patients in our test set
+-   What status do you expect for these patients?
+
+
+```{r select_unseen, echo=TRUE}
+head(test_set, 5) %>% select(age, bmi, gender, glucose_apache, h1_glucose_max, d1_glucose_max, ethnicity, wbc_apache)
+```
+
+```{r}
+original_test_set <- test_set
+```
+
+### see test data distribution 
+
+```{r}
+hist.data.frame(original_test_set)
+```
+
+```{r tableone, echo=TRUE}
+
+allvars <- c("bmi", "age", "gender", "glucose_apache", "h1_glucose_max", "d1_glucose_max","ethnicity", "wbc_apache")
+catvars <- c("gender")
+table_gossis <- CreateTableOne(vars = allvars, data = original_test_set,
+                factorVars = catvars,
+                strata = "outcome_variable")
+
+kableone(table_gossis, caption = "Summary statistics of the test set")
+```
+
+
+#### Predict diabetes mellitus in unseen patients
+####Original results:
+
+```{r predict_unseen, echo=TRUE}
+# Make predictions on test set
+
+test_set <- original_test_set
+
+forest_pred <- predict(forest,
+                       newdata = test_set,
+                       type = "class")
+
+# Combine unseen patients data with corresponding predictions
+data.frame(age = test_set$age,
+           bmi = test_set$bmi,
+           gender = test_set$gender,
+           glucose_apache = test_set$glucose_apache,
+           h1_glucose_max = test_set$h1_glucose_max, 
+           d1_glucose_max = test_set$d1_glucose_max,
+           ethnicity = test_set$ethnicity,
+           wbc_apache = test_set$wbc_apache,
+           prediction = forest_pred,
+           truth_value = test_set$outcome_variable) %>%
+          head(30) %>%
+          kable()
+
+```
+
+
+```{r AUROC, echo=TRUE}
+# Get the probabilities for our forest predictions
+forest_probs <- predict(forest, newdata = test_set, type = "prob")
+forest_probs <- forest_probs[, 2]
+# Create a "prediction" object using our probabilities and the outcome variable
+forest_roc <- prediction(forest_probs, test_set$outcome_variable)
+forest_perf <- performance(forest_roc, measure = "tpr", x.measure = "fpr")
+# Plot the ROC curve
+plot(forest_perf, col = rainbow(10))
+abline(a = 0, b = 1)
+# Calculate the AUC
+auc_forest <- performance(forest_roc, measure = "auc")
+auc_forest <- auc_forest@y.values[[1]]
+
+# Ground truth is recorded in the GOSSIS data
+cm = confusionMatrix(forest_pred,
+                test_set$outcome_variable,
+                positive = "1")$tab
+
+
+Reference <- factor(c(0, 0, 1, 1))
+Prediction <- factor(c(0, 1, 0, 1))
+Y      <- c(cm[1], cm[2], cm[3], cm[4])
+df_2 <- data.frame(Reference, Prediction, Y)
+
+ggplot(data =  df_2, mapping = aes(x = Reference, y = Prediction)) + ggtitle("Overall prediction")+
+  geom_tile(aes(fill = Y), colour = "white") +
+  geom_text(aes(label = sprintf("%1.0f", Y)), vjust = .5, fontface  = "bold", alpha = 1) +
+  scale_fill_gradient(low="white", high="#009194") +
+  theme_bw() + theme(legend.position = "none")+ coord_fixed()
+
+accuracy <- (cm[1] + cm[4])/(cm[1] + cm[2] + cm[3] + cm[4]) 
+recall = cm[4]/ (cm[4] + cm[2])
+specificity = cm[1]/ (cm[1] + cm[3])
+
+print("auc:")
+print(auc_forest)
+print("accuracy:")
+print(accuracy)
+print("recall:")
+print(recall)
+print("specificity:")
+print(specificity)
+
+
+```
+
+
+### A dataframe to save results
+```{r}
+df_result <- data.frame(name = character(), auc = double(), accuracy = double(), recall = double(), specificity = double(), range = character())
+```
+
+#### Subgroup analysis (discrete variables):
+
+```{r}
+
+library(ggplot2)
+
+var_list <- c("gender", "ethnicity")
+
+
+for (var in var_list)
+{
+print(var)
+    
+list <- unique(original_test_set[[var]])
+
+for (i in list)
+{
+test_set <- original_test_set[original_test_set[[var]] == i, ]
+num = dim(test_set)[1]
+
+# Make predictions on test set
+forest_pred <- predict(forest,
+                       newdata = test_set,
+                       type = "class")
+
+data.frame(age = test_set$age,
+           bmi = test_set$bmi,
+           gender = test_set$gender,
+           glucose_apache = test_set$glucose_apache,
+           h1_glucose_max = test_set$h1_glucose_max, 
+           d1_glucose_max = test_set$d1_glucose_max,
+           ethnicity = test_set$ethnicity,
+           wbc_apache = test_set$wbc_apache,
+           prediction = forest_pred,
+           truth_value = test_set$outcome_variable) 
+
+  
+# Get the probabilities for our forest predictions
+forest_probs <- predict(forest, newdata = test_set, type = "prob")
+forest_probs <- forest_probs[, 2]
+# Create a "prediction" object using our probabilities and the outcome variable
+forest_roc <- prediction(forest_probs, test_set$outcome_variable)
+forest_perf <- performance(forest_roc, measure = "tpr", x.measure = "fpr")
+# Plot the ROC curve
+plot(forest_perf, col = rainbow(10), main= paste(var,":",i,"(",num,")"))
+abline(a = 0, b = 1)
+# Calculate the AUC
+auc_forest <- performance(forest_roc, measure = "auc")
+auc_forest <- auc_forest@y.values[[1]]
+
+
+# Ground truth is recorded in the GOSSIS data
+cm = confusionMatrix(forest_pred,
+                test_set$outcome_variable,
+                positive = "1")$tab
+
+
+Reference <- factor(c(0, 0, 1, 1))
+Prediction <- factor(c(0, 1, 0, 1))
+Y      <- c(cm[1], cm[2], cm[3], cm[4])
+df_2 <- data.frame(Reference, Prediction, Y)
+
+print(ggplot(data =  df_2, mapping = aes(x = Reference, y = Prediction)) + ggtitle(paste(var,":",i,"(",num,")")) +
+  geom_tile(aes(fill = Y), colour = "white") +
+  geom_text(aes(label = sprintf("%1.0f", Y)), vjust = .5, fontface  = "bold", alpha = 1) +
+  scale_fill_gradient(low="white", high="#009194") +
+  theme_bw() + theme(legend.position = "none")+ coord_fixed())
+
+accuracy <- (cm[1] + cm[4])/(cm[1] + cm[2] + cm[3] + cm[4]) 
+recall = cm[4]/ (cm[4] + cm[2])
+specificity = cm[1]/ (cm[1] + cm[3])
+
+
+df_result <- rbind(df_result, data.frame(name = var, auc = auc_forest,accuracy = accuracy,recall = recall,specificity = specificity, range = i))
+
+print(paste(i,"(", num, "):"))
+print("auc:")
+print(auc_forest)
+print("accuracy:")
+print(accuracy)
+print("recall:")
+print(recall)
+print("specificity:")
+print(specificity)
+
+}
+}
+  
+```
+#### Subgroup analysis (continuous variables):
+
+```{r}
+df <- data.frame(name = "age", range = c(20, 40, 60, 80))
+df <- rbind(df, data.frame(name = "bmi", range = c(20, 30, 40)))
+df <- rbind(df, data.frame(name = "glucose_apache", range = c(100, 200, 300)))
+df <- rbind(df, data.frame(name = "h1_glucose_max", range = c(100, 200, 300)))
+df <- rbind(df, data.frame(name = "d1_glucose_max", range = c(100, 200, 300)))
+df <- rbind(df, data.frame(name = "wbc_apache", range = c(5, 10, 15, 20)))
+```
+
+```{r}
+
+var_list <- c("age","bmi","glucose_apache", "h1_glucose_max", "d1_glucose_max", "wbc_apache")
+
+for (var in var_list)
+{
+print(var)
+var_range = df[df$name==var,"range"]
+
+list <- unique(original_test_set[[var]])
+
+
+
+for (i in 0:length(var_range)+1)
+{
+  
+
+  
+  
+if(i==1){
+  test_set <- original_test_set[original_test_set[[var]] < var_range[i], ]
+}
+else if(i==length(var_range)+1){
+  test_set <- original_test_set[original_test_set[[var]] > var_range[i-1], ]
+}
+else{
+  test_set <- original_test_set[original_test_set[[var]] > var_range[i-1] & original_test_set[[var]] < var_range[i], ]
+}
+
+num = dim(test_set)[1]
+
+if(i==1){
+  range_text = paste("[", i, "]", "<", var_range[i], "(",num, ")")
+}
+else if(i==length(var_range)+1){
+  range_text = paste("[", i, "]", ">", var_range[i-1], "(",num, ")")
+}
+else{
+  range_text = paste("[", i, "]", var_range[i-1],"~", var_range[i], "(",num, ")")
+}
+
+# Make predictions on test set
+forest_pred <- predict(forest,
+                       newdata = test_set,
+                       type = "class")
+
+data.frame(age = test_set$age,
+           bmi = test_set$bmi,
+           gender = test_set$gender,
+           glucose_apache = test_set$glucose_apache,
+           h1_glucose_max = test_set$h1_glucose_max, 
+           d1_glucose_max = test_set$d1_glucose_max,
+           ethnicity = test_set$ethnicity,
+           wbc_apache = test_set$wbc_apache,
+           prediction = forest_pred,
+           truth_value = test_set$outcome_variable) 
+
+  
+# Get the probabilities for our forest predictions
+forest_probs <- predict(forest, newdata = test_set, type = "prob")
+forest_probs <- forest_probs[, 2]
+# Create a "prediction" object using our probabilities and the outcome variable
+forest_roc <- prediction(forest_probs, test_set$outcome_variable)
+forest_perf <- performance(forest_roc, measure = "tpr", x.measure = "fpr")
+# Plot the ROC curve
+plot(forest_perf, col = rainbow(10), main= paste(var,":",range_text))
+abline(a = 0, b = 1)
+# Calculate the AUC
+auc_forest <- performance(forest_roc, measure = "auc")
+auc_forest <- auc_forest@y.values[[1]]
+
+print(paste(range_text,":"))
+
+
+# Ground truth is recorded in the GOSSIS data
+cm = confusionMatrix(forest_pred,
+                test_set$outcome_variable,
+                positive = "1")$tab
+
+Reference <- factor(c(0, 0, 1, 1))
+Prediction <- factor(c(0, 1, 0, 1))
+Y      <- c(cm[1], cm[2], cm[3], cm[4])
+df_2 <- data.frame(Reference, Prediction, Y)
+
+print(ggplot(data =  df_2, mapping = aes(x = Reference, y = Prediction)) + ggtitle(range_text) +
+  geom_tile(aes(fill = Y), colour = "white") +
+  geom_text(aes(label = sprintf("%1.0f", Y)), vjust = .5, fontface  = "bold", alpha = 1) +
+  scale_fill_gradient(low="white", high="#009194") +
+  theme_bw() + theme(legend.position = "none")+ coord_fixed())
+
+accuracy <- (cm[1] + cm[4])/(cm[1] + cm[2] + cm[3] + cm[4]) 
+recall = cm[4]/ (cm[4] + cm[2])
+specificity = cm[1]/ (cm[1] + cm[3])
+
+df_result <- rbind(df_result, data.frame(name = var, auc = auc_forest,accuracy = accuracy,recall = recall,specificity = specificity, range = range_text))
+
+
+print("auc:")
+print(auc_forest)
+print("accuracy:")
+print(accuracy)
+print("recall:")
+print(recall)
+print("specificity:")
+print(specificity)
+
+}
+}
+  
+```
+
+```{r}
+var_list <- c("gender","ethnicity","age","bmi","glucose_apache", "h1_glucose_max", "d1_glucose_max", "wbc_apache")
+
+for (var in var_list)
+{
+tmp <- df_result %>% filter(name == var)
+print(ggplot(tmp, aes(range, auc)) + 
+  xlab(var) + ylab("AUC") +
+  geom_bar(stat = "identity"))
+
+print("Gap:")
+print(max(tmp$auc)-min(tmp$auc))
+}
+```
+
+```{r}
+for (var in var_list)
+{
+tmp <- df_result %>% filter(name == var)
+print(ggplot(tmp, aes(range, accuracy)) + 
+  xlab(var) + ylab("Accuracy") +
+  geom_bar(stat = "identity"))
+  print("Gap:")
+  print(max(tmp$accuracy)-min(tmp$accuracy))
+}
+```
+
+
+```{r}
+for (var in var_list)
+{
+tmp <- df_result %>% filter(name == var)
+print(ggplot(tmp, aes(range, recall)) + 
+  xlab(var) + ylab("Recall") +
+  geom_bar(stat = "identity"))
+  print("Gap:")
+  print(max(tmp$recall)-min(tmp$recall))
+}
+```
+
+
+```{r}
+for (var in var_list)
+{
+tmp <- df_result %>% filter(name == var)
+print(ggplot(tmp, aes(range, specificity)) + 
+  xlab(var) + ylab("Specificity") +
+  geom_bar(stat = "identity"))
+  print("Gap:")
+  print(max(tmp$specificity)-min(tmp$specificity))
+}
+```
+
