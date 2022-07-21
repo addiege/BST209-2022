@@ -1,7 +1,6 @@
 ---
 title: "BST209 Group Projec Team G"
-author: Skyler Shapiro (original code author), Jennifer Cape, Shernaz Dossabhoy, Addison Gearhart and Po-Chih
-  Kuo
+author: Skyler Shapiro (original code author), Jennifer Cape, Shernaz Dossabhoy, Addison Gearhart and Po-Chih Kuo
 date: "2022/07/20"
 ---
 
