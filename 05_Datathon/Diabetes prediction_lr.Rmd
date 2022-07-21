@@ -1,7 +1,6 @@
 ---
-title: "BST209 Group Projec Team G"
-author: Skyler Shapiro (original code author), Jennifer Cape, Shernaz Dossabhoy, Addison Gearhart and Po-Chih
-  Kuo
+title: "BST209 Group Project Team G - Logistic Regression"
+author: Skyler Shapiro (original code author), Jennifer Cape, Shernaz Dossabhoy, Addison Gearhart and Po-Chih Kuo
 date: "2022/07/20"
 ---
 
@@ -10,21 +9,6 @@ knitr::opts_chunk$set(echo = TRUE)
 options(gargle_verbosity = "info")
 ```
 
-## 0. Introduction
-
-This script runs through a simple workflow for training and testing a diabetes mellitus prediction model. Briefly, we will:
-
-1.  Load required packages and gather data
-2.  Split the data into training and testing sets
-3.  Preprocess the data and remove missing values
-4.  Build a random forest classifier using the training set
-5.  Evaluate our model on the test set
-
-You may ask: Why is it important to predict cases of diabetes mellitus in patients?
-
-In the hospital, patient medical records may take days to transfer. Knowledge about chronic conditions like diabetes can inform clinical decisions about patient care and ultimately improve patient outcomes.
-
-Lets begin!
 
 ## 1. Getting started
 
