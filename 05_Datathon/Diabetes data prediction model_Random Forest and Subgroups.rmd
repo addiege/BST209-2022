@@ -1,6 +1,6 @@
 ---
 title: "Diabetes Mellitus Prediction Model"
- author: "Skyler Shapiro (original code author), Jennifer Cape, Shernaz Dossabhoy, Addison Gearhart and Po-Chih Kuo"
+author: "Skyler Shapiro (original code author), Jennifer Cape, Shernaz Dossabhoy, Addison Gearhart and Po-Chih Kuo"
 date: "2022/07/21"
 output: 
   html_document: 
@@ -42,10 +42,12 @@ if(!require("dplyr")) install.packages("dplyr")
 if(!require("ROCR")) install.packages("ROCR")
 if(!require("tidyverse")) install.packages("randomForest")
 if(!require("knitr")) install.packages("knitr")
+if(!require("Hmisc")) install.packages("Hmisc")
+
 
 # List of packages to load
 packages <- c("tidyverse", "tableone", "caret", "dplyr", "ROCR",
-              "knitr", "randomForest")
+              "knitr", "randomForest", "Hmisc")
 
 # Load packages
 lapply(packages, FUN = function(X) {
@@ -176,7 +178,7 @@ Since our tree model does not require normalization, so we skipped this step.
 
 
 ### Changing the model is also possible and we have provided documentation in separate notbeooks for this. http://topepo.github.io/caret/train-models-by-tag.html
-for example: metric = "svmPoly", metric = "glm"
+for example: method = "svmPoly", method = "glm"
 
 ```{r train_model, echo=TRUE}
 # Define forest tuning parameters
@@ -223,7 +225,6 @@ original_test_set <- test_set
 
 
 ```{r}
-install.packages("Hmisc")
 library(Hmisc)
 hist.data.frame(original_test_set)
 ```
@@ -271,18 +272,52 @@ abline(a = 0, b = 1)
 # Calculate the AUC
 auc_forest <- performance(forest_roc, measure = "auc")
 auc_forest <- auc_forest@y.values[[1]]
+
+# Ground truth is recorded in the GOSSIS data
+cm = confusionMatrix(forest_pred,
+                test_set$outcome_variable,
+                positive = "1")$tab
+
+
+Reference <- factor(c(0, 0, 1, 1))
+Prediction <- factor(c(0, 1, 0, 1))
+Y      <- c(cm[1], cm[2], cm[3], cm[4])
+df_2 <- data.frame(Reference, Prediction, Y)
+
+ggplot(data =  df_2, mapping = aes(x = Reference, y = Prediction)) + ggtitle("Overall prediction")+
+  geom_tile(aes(fill = Y), colour = "white") +
+  geom_text(aes(label = sprintf("%1.0f", Y)), vjust = .5, fontface  = "bold", alpha = 1) +
+  scale_fill_gradient(low="white", high="#009194") +
+  theme_bw() + theme(legend.position = "none")+ coord_fixed()
+
+accuracy <- (cm[1] + cm[4])/(cm[1] + cm[2] + cm[3] + cm[4]) 
+recall = cm[4]/ (cm[4] + cm[2])
+specificity = cm[1]/ (cm[1] + cm[3])
+
+print("auc:")
 print(auc_forest)
+print("accuracy:")
+print(accuracy)
+print("recall:")
+print(recall)
+print("specificity:")
+print(specificity)
+
 ```
 
 ### A dataframe to save results
 ```{r}
-df_result <- data.frame(name = character(), auc = double(), range = character())
+df_result <- data.frame(name = character(), auc = double(), accuracy = double(), recall = double(), specificity = double(), range = character())
 ```
 
 #### Subgroup analysis (discrete variables):
 
 ```{r}
+
+library(ggplot2)
+
 var_list <- c("gender", "ethnicity")
+
 
 for (var in var_list)
 {
@@ -324,8 +359,41 @@ abline(a = 0, b = 1)
 # Calculate the AUC
 auc_forest <- performance(forest_roc, measure = "auc")
 auc_forest <- auc_forest@y.values[[1]]
-print(paste(i,"(", num, "):", auc_forest))
-df_result <- rbind(df_result, data.frame(name = var, auc = auc_forest, range = i))
+
+
+# Ground truth is recorded in the GOSSIS data
+cm = confusionMatrix(forest_pred,
+                test_set$outcome_variable,
+                positive = "1")$tab
+
+
+Reference <- factor(c(0, 0, 1, 1))
+Prediction <- factor(c(0, 1, 0, 1))
+Y      <- c(cm[1], cm[2], cm[3], cm[4])
+df_2 <- data.frame(Reference, Prediction, Y)
+
+print(ggplot(data =  df_2, mapping = aes(x = Reference, y = Prediction)) + ggtitle(paste(var,":",i,"(",num,")")) +
+  geom_tile(aes(fill = Y), colour = "white") +
+  geom_text(aes(label = sprintf("%1.0f", Y)), vjust = .5, fontface  = "bold", alpha = 1) +
+  scale_fill_gradient(low="white", high="#009194") +
+  theme_bw() + theme(legend.position = "none")+ coord_fixed())
+
+accuracy <- (cm[1] + cm[4])/(cm[1] + cm[2] + cm[3] + cm[4]) 
+recall = cm[4]/ (cm[4] + cm[2])
+specificity = cm[1]/ (cm[1] + cm[3])
+
+
+df_result <- rbind(df_result, data.frame(name = var, auc = auc_forest,accuracy = accuracy,recall = recall,specificity = specificity, range = i))
+
+print(paste(i,"(", num, "):"))
+print("auc:")
+print(auc_forest)
+print("accuracy:")
+print(accuracy)
+print("recall:")
+print(recall)
+print("specificity:")
+print(specificity)
 
 }
 }
@@ -353,18 +421,11 @@ var_range = df[df$name==var,"range"]
 
 list <- unique(original_test_set[[var]])
 
+
 for (i in 0:length(var_range)+1)
 {
   
-if(i==1){
-  range_text = paste("<", var_range[i], "(",num, ")")
-}
-else if(i==length(var_range)+1){
-  range_text = paste(">", var_range[i-1], "(",num, ")")
-}
-else{
-  range_text = paste(var_range[i-1],"~", var_range[i], "(",num, ")")
-}
+
   
   
 if(i==1){
@@ -378,6 +439,16 @@ else{
 }
 
 num = dim(test_set)[1]
+
+if(i==1){
+  range_text = paste("[", i, "]", "<", var_range[i], "(",num, ")")
+}
+else if(i==length(var_range)+1){
+  range_text = paste("[", i, "]", ">", var_range[i-1], "(",num, ")")
+}
+else{
+  range_text = paste("[", i, "]", var_range[i-1],"~", var_range[i], "(",num, ")")
+}
   
 # Make predictions on test set
 forest_pred <- predict(forest,
@@ -409,9 +480,40 @@ abline(a = 0, b = 1)
 auc_forest <- performance(forest_roc, measure = "auc")
 auc_forest <- auc_forest@y.values[[1]]
 
-print(paste(range_text,":", auc_forest))
+print(paste(range_text,":"))
 
-df_result <- rbind(df_result, data.frame(name = var, auc = auc_forest, range = range_text))
+
+# Ground truth is recorded in the GOSSIS data
+cm = confusionMatrix(forest_pred,
+                test_set$outcome_variable,
+                positive = "1")$tab
+
+Reference <- factor(c(0, 0, 1, 1))
+Prediction <- factor(c(0, 1, 0, 1))
+Y      <- c(cm[1], cm[2], cm[3], cm[4])
+df_2 <- data.frame(Reference, Prediction, Y)
+
+print(ggplot(data =  df_2, mapping = aes(x = Reference, y = Prediction)) + ggtitle(range_text) +
+  geom_tile(aes(fill = Y), colour = "white") +
+  geom_text(aes(label = sprintf("%1.0f", Y)), vjust = .5, fontface  = "bold", alpha = 1) +
+  scale_fill_gradient(low="white", high="#009194") +
+  theme_bw() + theme(legend.position = "none")+ coord_fixed())
+
+accuracy <- (cm[1] + cm[4])/(cm[1] + cm[2] + cm[3] + cm[4]) 
+recall = cm[4]/ (cm[4] + cm[2])
+specificity = cm[1]/ (cm[1] + cm[3])
+
+df_result <- rbind(df_result, data.frame(name = var, auc = auc_forest,accuracy = accuracy,recall = recall,specificity = specificity, range = range_text))
+
+
+print("auc:")
+print(auc_forest)
+print("accuracy:")
+print(accuracy)
+print("recall:")
+print(recall)
+print("specificity:")
+print(specificity)
 
 }
 }
@@ -427,64 +529,50 @@ tmp <- df_result %>% filter(name == var)
 print(ggplot(tmp, aes(range, auc)) + 
   xlab(var) + ylab("AUC") +
   geom_bar(stat = "identity"))
+
+print("Gap:")
+print(max(tmp$auc)-min(tmp$auc))
 }
 ```
 
-## 6. Model evaluation
-
-### 6.1 Creating our confusion matrix
-
--   A confusion matrix relates predictions to the ground truth.
--   Forms the basis for evaluation metrics.
--   Non-diabetes is our "0" (-ve). Diabetes is our "1" (+ve).
-
-```{r create_confusion_matrix, echo=TRUE}
-# Ground truth is recorded in the GOSSIS data
-cm = confusionMatrix(forest_pred,
-                test_set$outcome_variable,
-                positive = "1")$tab
-cm
-```
 ```{r}
-TClass <- factor(c(0, 0, 1, 1))
-PClass <- factor(c(0, 1, 0, 1))
-Y      <- c(cm[1], cm[2], cm[3], cm[4])
-df_2 <- data.frame(TClass, PClass, Y)
-
-library(ggplot2)
-ggplot(data =  df_2, mapping = aes(x = TClass, y = PClass)) +
-  geom_tile(aes(fill = Y), colour = "white") +
-  geom_text(aes(label = sprintf("%1.0f", Y)), vjust = 1) +
-  scale_fill_gradient(low = "blue", high = "red") +
-  theme_bw() + theme(legend.position = "none")
+for (var in var_list)
+{
+tmp <- df_result %>% filter(name == var)
+print(ggplot(tmp, aes(range, accuracy)) + 
+  xlab(var) + ylab("Accuracy") +
+  geom_bar(stat = "identity"))
+  print("Gap:")
+  print(max(tmp$accuracy)-min(tmp$accuracy))
+}
 ```
 
-### 6.2 Evaluation metrics
 
-#### 6.2.1 Accuracy
+```{r}
+for (var in var_list)
+{
+tmp <- df_result %>% filter(name == var)
+print(ggplot(tmp, aes(range, recall)) + 
+  xlab(var) + ylab("Recall") +
+  geom_bar(stat = "identity"))
+  print("Gap:")
+  print(max(tmp$recall)-min(tmp$recall))
+}
+```
 
--   How many shots did we take? What proportion hit the target?
--   Accuracy = $\frac{(TP + TN)}{(TP + TN + FP + FN)}$
 
-#### 6.2.2 Sensitivity
+```{r}
+for (var in var_list)
+{
+tmp <- df_result %>% filter(name == var)
+print(ggplot(tmp, aes(range, specificity)) + 
+  xlab(var) + ylab("Specificity") +
+  geom_bar(stat = "identity"))
+  print("Gap:")
+  print(max(tmp$specificity)-min(tmp$specificity))
+}
+```
 
--   (AKA "Recall" AKA "True Positive Rate")
--   Recall = $\frac{(TP)}{(TP + FN)}$
-
-#### 6.2.1 Specificity
-
--   (AKA "True Negative Rate")
--   Specificity = $\frac{(TN)}{(TN + FP)}$
-
-#### 6.2.1 Area under ROC Curve (AUC)
-
--   Developed in the 1940s by radar operators.
--   Popular measure of discrimination.
--   Plots *1 - specificity* vs. *sensitivity* at varying probability thresholds.
--   0.5 is terrible. 1.0 is perfect.
--   AUC of 0.9 tells us that the 90% of time our model will assign a higher risk to a randomly selected patient with an event than to a randomly selected patient without an event
-
-We'll use the [ROCR package](https://cran.r-project.org/web/packages/ROCR/index.html) ("Visualizing the Performance of Scoring Classifiers") to plot the curve.
 
 
 
