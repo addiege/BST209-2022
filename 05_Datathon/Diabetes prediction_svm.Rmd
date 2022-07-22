@@ -261,7 +261,7 @@ test_set <- original_test_set
 
 forest_pred <- predict(forest,
                        newdata = test_set,
-                       type = "raw")
+                       type = "class")
 
 # Combine unseen patients data with corresponding predictions
 data.frame(age = test_set$age,
@@ -282,7 +282,7 @@ data.frame(age = test_set$age,
 
 ```{r AUROC, echo=TRUE}
 # Get the probabilities for our forest predictions
-forest_probs <- predict(forest, test_set, probability=TRUE)
+forest_probs <- predict(forest, test_set, probability = TRUE)
 forest_probs <- attr(forest_probs, "probabilities")[,1]
 
 # Create a "prediction" object using our probabilities and the outcome variable
@@ -335,10 +335,19 @@ df_result <- data.frame(name = character(), auc = double(), accuracy = double(),
 ```
 
 #### Subgroup analysis (discrete variables):
+```{r}
+forest_pred_orig <- predict(forest,
+                       newdata = original_test_set,
+                       type = "class")
+
+# Get the probabilities for our forest predictions
+forest_probs_orig <- predict(forest, original_test_set, probability = TRUE)
+forest_probs_orig <- attr(forest_probs_orig, "probabilities")[,1]
+
+outcome <- original_test_set$outcome_variable
+```
 
 ```{r}
-
-
 var_list <- c("gender", "ethnicity")
 
 
@@ -350,31 +359,16 @@ list <- unique(original_test_set[[var]])
 
 for (i in list)
 {
-test_set <- original_test_set[original_test_set[[var]] == i, ]
-num = dim(test_set)[1]
+forest_probs <- forest_probs_orig[original_test_set[[var]] == i]
+forest_pred <- forest_pred_orig[original_test_set[[var]] == i]
+outcome_sub <- outcome[original_test_set[[var]] == i]
+
+num = length(forest_probs)
 
 # Make predictions on test set
-forest_pred <- predict(forest,
-                       newdata = test_set,
-                       type = "class")
 
-data.frame(age = test_set$age,
-           bmi = test_set$bmi,
-           gender = test_set$gender,
-           glucose_apache = test_set$glucose_apache,
-           h1_glucose_max = test_set$h1_glucose_max, 
-           d1_glucose_max = test_set$d1_glucose_max,
-           ethnicity = test_set$ethnicity,
-           wbc_apache = test_set$wbc_apache,
-           prediction = forest_pred,
-           truth_value = test_set$outcome_variable) 
-
-  
-# Get the probabilities for our forest predictions
-forest_probs <- predict(forest, newdata = test_set, type = "prob")
-forest_probs <- forest_probs[, 2]
 # Create a "prediction" object using our probabilities and the outcome variable
-forest_roc <- prediction(forest_probs, test_set$outcome_variable)
+forest_roc <- prediction(forest_probs, outcome_sub)
 forest_perf <- performance(forest_roc, measure = "tpr", x.measure = "fpr")
 # Plot the ROC curve
 plot(forest_perf, col = rainbow(10), main= paste(var,":",i,"(",num,")"))
@@ -386,7 +380,7 @@ auc_forest <- auc_forest@y.values[[1]]
 
 # Ground truth is recorded in the GOSSIS data
 cm = confusionMatrix(forest_pred,
-                test_set$outcome_variable,
+                outcome_sub,
                 positive = "1")$tab
 
 
@@ -448,16 +442,23 @@ for (i in 0:length(var_range)+1)
 {
 
 if(i==1){
-  test_set <- original_test_set[original_test_set[[var]] < var_range[i], ]
+  forest_probs <- forest_probs_orig[original_test_set[[var]] < var_range[i]]
+  forest_pred <- forest_pred_orig[original_test_set[[var]] < var_range[i]]
+  outcome_sub <- outcome[original_test_set[[var]] < var_range[i]]
 }
 else if(i==length(var_range)+1){
-  test_set <- original_test_set[original_test_set[[var]] > var_range[i-1], ]
+  forest_probs <- forest_probs_orig[original_test_set[[var]] > var_range[i-1]]
+  forest_pred <- forest_pred_orig[original_test_set[[var]] > var_range[i-1]]
+  outcome_sub <- outcome[original_test_set[[var]] > var_range[i-1]]
 }
 else{
   test_set <- original_test_set[original_test_set[[var]] > var_range[i-1] & original_test_set[[var]] < var_range[i], ]
+  forest_probs <- forest_probs_orig[original_test_set[[var]] > var_range[i-1] & original_test_set[[var]] < var_range[i]]
+  forest_pred <- forest_pred_orig[original_test_set[[var]] > var_range[i-1] & original_test_set[[var]] < var_range[i]]
+  outcome_sub <- outcome[original_test_set[[var]] > var_range[i-1] & original_test_set[[var]] < var_range[i]]
 }
 
-num = dim(test_set)[1]
+num = length(forest_probs)
 
   
 if(i==1){
@@ -471,28 +472,8 @@ else{
 }
   
   
-# Make predictions on test set
-forest_pred <- predict(forest,
-                       newdata = test_set,
-                       type = "class")
-
-data.frame(age = test_set$age,
-           bmi = test_set$bmi,
-           gender = test_set$gender,
-           glucose_apache = test_set$glucose_apache,
-           h1_glucose_max = test_set$h1_glucose_max, 
-           d1_glucose_max = test_set$d1_glucose_max,
-           ethnicity = test_set$ethnicity,
-           wbc_apache = test_set$wbc_apache,
-           prediction = forest_pred,
-           truth_value = test_set$outcome_variable) 
-
-  
-# Get the probabilities for our forest predictions
-forest_probs <- predict(forest, newdata = test_set, type = "prob")
-forest_probs <- forest_probs[, 2]
 # Create a "prediction" object using our probabilities and the outcome variable
-forest_roc <- prediction(forest_probs, test_set$outcome_variable)
+forest_roc <- prediction(forest_probs, outcome_sub)
 forest_perf <- performance(forest_roc, measure = "tpr", x.measure = "fpr")
 # Plot the ROC curve
 plot(forest_perf, col = rainbow(10), main= paste(var,":",range_text))
@@ -506,7 +487,7 @@ print(paste(range_text,":"))
 
 # Ground truth is recorded in the GOSSIS data
 cm = confusionMatrix(forest_pred,
-                test_set$outcome_variable,
+                outcome_sub,
                 positive = "1")$tab
 
 Reference <- factor(c(0, 0, 1, 1))

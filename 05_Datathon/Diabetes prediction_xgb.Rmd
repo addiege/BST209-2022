@@ -282,7 +282,7 @@ forest_perf <- performance(forest_roc, measure = "tpr", x.measure = "fpr")
 # Plot the ROC curve
 plot(forest_perf, col = rainbow(10))
 abline(a = 0, b = 1)
-# Calculate the AUC
+# Calculate the AUC 
 auc_forest <- performance(forest_roc, measure = "auc")
 auc_forest <- auc_forest@y.values[[1]]
 
